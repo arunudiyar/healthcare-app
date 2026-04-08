@@ -1,1 +1,239 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Real-time Healthcare Data Processing Platform (Serverless Architecture)
 
+Resources:
+
+####################################################
+# DynamoDB Table (Time-Series Database)
+####################################################
+
+  HealthDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: health_data
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: device_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: device_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+
+
+####################################################
+# Kinesis Stream (Real-time ingestion pipeline)
+####################################################
+
+  HealthStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: health-stream
+      ShardCount: 1
+
+
+####################################################
+# S3 Bucket with Lifecycle (Warm → Cold Storage)
+####################################################
+
+  ArchiveBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub health-archive-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: MoveToGlacier
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 30
+
+
+####################################################
+# IAM Role for Lambda Execution
+####################################################
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: healthcare-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      Policies:
+        - PolicyName: DynamoDBAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                Resource: "*"
+
+        - PolicyName: KinesisAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:ListStreams
+                Resource: "*"
+
+
+####################################################
+# Lambda Function: Ingestion Processor
+####################################################
+
+  IngestLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ingest-health-data
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Timeout: 30
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import base64
+          import time
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table('health_data')
+
+          def lambda_handler(event, context):
+
+              for record in event['Records']:
+
+                  payload = base64.b64decode(record['kinesis']['data'])
+                  data = json.loads(payload)
+
+                  table.put_item(
+                      Item={
+                          "device_id": data["device_id"],
+                          "timestamp": str(int(time.time())),
+                          "heart_rate": data["heart_rate"],
+                          "bp": data["bp"]
+                      }
+                  )
+
+              return {"status": "success"}
+
+
+####################################################
+# Lambda Function: Realtime API
+####################################################
+
+  RealtimeLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: realtime-health-api
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Timeout: 30
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+
+          table = boto3.resource('dynamodb').Table('health_data')
+
+          def lambda_handler(event, context):
+
+              device_id = event['queryStringParameters']['device_id']
+
+              response = table.query(
+                  KeyConditionExpression="device_id = :d",
+                  ExpressionAttributeValues={":d": device_id},
+                  Limit=1,
+                  ScanIndexForward=False
+              )
+
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps(response["Items"])
+              }
+
+
+####################################################
+# Lambda Function: Historical API
+####################################################
+
+  HistoricalLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: historical-health-api
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Timeout: 30
+      Role: !GetAtt LambdaExecutionRole.Arn
+
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+
+          table = boto3.resource('dynamodb').Table('health_data')
+
+          def lambda_handler(event, context):
+
+              device_id = event['queryStringParameters']['device_id']
+
+              response = table.query(
+                  KeyConditionExpression="device_id = :d",
+                  ExpressionAttributeValues={":d": device_id}
+              )
+
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps(response["Items"])
+              }
+
+
+####################################################
+# API Gateway HTTP API
+####################################################
+
+  HealthAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: health-api
+      ProtocolType: HTTP
+
+
+####################################################
+# Outputs
+####################################################
+
+Outputs:
+
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref HealthAPI
+
+  DynamoDBTable:
+    Description: DynamoDB Table Name
+    Value: !Ref HealthDataTable
+
+  KinesisStream:
+    Description: Kinesis Stream Name
+    Value: !Ref HealthStream
