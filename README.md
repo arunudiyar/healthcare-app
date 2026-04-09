@@ -320,7 +320,16 @@ Optimization techniques:
 Estimated monthly cost (Mumbai region):
 
 ```
-~$28,000/month (~₹23 lakh/month)
+Amazon API Gateway           : ~$9,200/month
+AWS Lambda                   : ~$2,800/month
+Amazon Kinesis Data Streams  : ~$11,500/month
+Amazon DynamoDB (On-Demand)  : ~$3,100/month
+Amazon S3 (Warm Storage)     : ~$180/month
+Amazon S3 Glacier            : ~$90/month
+Amazon CloudWatch Monitoring : ~$350/month
+Data Transfer (Intra-region) : ~$250/month
+
+~$27,470/month (~₹22.8 lakh/month)
 ```
 
 based on 100,000 device workload model.
