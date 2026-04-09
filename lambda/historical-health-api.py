@@ -16,7 +16,12 @@ class DecimalEncoder(json.JSONEncoder):
 def lambda_handler(event, context):
 
     params = event.get("queryStringParameters") or {}
+
     device_id = params.get("device_id")
+    limit = int(params.get("limit", 20))
+    start = params.get("start")
+    end = params.get("end")
+    last_key = params.get("lastKey")
 
     if not device_id:
         return {
@@ -24,12 +29,42 @@ def lambda_handler(event, context):
             "body": json.dumps({"error": "device_id required"})
         }
 
-    response = table.query(
-        KeyConditionExpression=Key('device_id').eq(device_id)
-    )
+    # Base query
+    if start and end:
+
+        query = {
+            "KeyConditionExpression":
+                Key("device_id").eq(device_id)
+                & Key("timestamp").between(start, end),
+            "Limit": limit
+        }
+
+    else:
+
+        query = {
+            "KeyConditionExpression":
+                Key("device_id").eq(device_id),
+            "Limit": limit
+        }
+
+    # Pagination support
+    if last_key:
+        query["ExclusiveStartKey"] = {
+            "device_id": device_id,
+            "timestamp": last_key
+        }
+
+    response = table.query(**query)
+
+    result = {
+        "data": response.get("Items", [])
+    }
+
+    if "LastEvaluatedKey" in response:
+        result["nextToken"] = response["LastEvaluatedKey"]["timestamp"]
 
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(response["Items"], cls=DecimalEncoder)
+        "body": json.dumps(result, cls=DecimalEncoder)
     }
