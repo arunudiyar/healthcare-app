@@ -1,6 +1,19 @@
 # Healthcare IoT Real-Time Ingestion Platform (AWS Serverless)
 
-## Project Overview
+## Architecture Goals
+
+This architecture was designed with production-oriented healthcare telemetry objectives:
+
+* high-throughput ingestion from large-scale medical device fleets
+* burst-resilient buffering using streaming architecture
+* time-series optimized storage for device-based queries
+* serverless auto-scaling without infrastructure management overhead
+* compliance-ready security posture aligned with HIPAA / GDPR patterns
+* cost-aware telemetry retention lifecycle using hot / warm / cold storage tiers
+
+---
+
+# Project Overview
 
 This project demonstrates a scalable AWS serverless backend architecture designed to ingest and process real-time healthcare telemetry data such as heart rate and blood pressure from large numbers of simulated monitoring devices.
 
@@ -34,20 +47,19 @@ architecture-diagram/
 
 # AWS Services Used
 
-### Amazon API Gateway
+## Amazon API Gateway
 
-Used as the secure ingestion entry point and for exposing retrieval APIs.
+Used as the secure ingestion entry point and retrieval API exposure layer.
 
 Provides:
 
 * HTTPS endpoint exposure
 * throttling protection
-* request validation capability
 * scalable ingestion layer
 
-### Amazon Kinesis Data Streams
+## Amazon Kinesis Data Streams
 
-Acts as a buffering layer between ingestion and processing to absorb burst traffic and decouple pipeline stages.
+Acts as a buffering layer between ingestion and processing.
 
 Provides:
 
@@ -56,7 +68,7 @@ Provides:
 * horizontal shard scaling
 * near real-time processing
 
-### AWS Lambda
+## AWS Lambda
 
 Processes telemetry events and serves realtime and historical API requests.
 
@@ -65,9 +77,9 @@ Provides:
 * event-driven execution
 * automatic scaling
 * batch processing support
-* cost-efficient serverless compute
+* cost-efficient compute
 
-### Amazon DynamoDB
+## Amazon DynamoDB
 
 Stores telemetry data using a time-series schema optimized for device-based access patterns.
 
@@ -76,9 +88,9 @@ Provides:
 * millisecond latency reads
 * infinite horizontal scaling
 * serverless storage
-* high availability across AZs
+* multi-AZ high availability
 
-### Amazon CloudWatch
+## Amazon CloudWatch
 
 Used for monitoring, logging, and observability.
 
@@ -89,13 +101,13 @@ Provides:
 * failure monitoring
 * alarm triggering capability
 
-### AWS CloudFormation
+## AWS CloudFormation
 
 Used to provision infrastructure in a repeatable and version-controlled manner.
 
-### AWS IAM
+## AWS IAM
 
-Provides least-privilege secure service-to-service access.
+Provides secure least-privilege service-to-service access.
 
 ---
 
@@ -119,21 +131,21 @@ Sort Key:
 timestamp
 ```
 
-This schema supports:
+Supports:
 
-* fast retrieval of latest device readings
-* efficient historical timeline queries
+* fast retrieval of latest readings
+* efficient timeline queries
 * predictable scaling performance
 
 ---
 
 # APIs Implemented
 
-### POST /ingest-health-data
+## POST /ingest-health-data
 
 Accepts telemetry data from simulator devices and forwards it into the ingestion pipeline.
 
-### GET /realtime-data
+## GET /realtime-data
 
 Returns the most recent telemetry reading for a device.
 
@@ -143,9 +155,9 @@ Example:
 GET /realtime-data?device_id=device001
 ```
 
-### GET /historical-data
+## GET /historical-data
 
-Returns historical telemetry records for a device.
+Returns historical telemetry records.
 
 Example:
 
@@ -155,88 +167,115 @@ GET /historical-data?device_id=device001
 
 ---
 
-# Device Simulator
+# Setup Steps (AWS Console Deployment)
 
-A lightweight Python simulator generates telemetry data every 2 seconds to emulate real device behavior.
+## Step 1 — Deploy Infrastructure
 
-Simulator location:
+1. Open AWS Console
+2. Navigate to CloudFormation
+3. Click **Create Stack**
+4. Upload:
 
 ```
-simulator/simulator.py
+cloudformation/healthcare-stack.yaml
 ```
 
-Run using:
+5. Enter stack name:
+
+```
+healthcare-stack
+```
+
+6. Enable:
+
+```
+CAPABILITY_NAMED_IAM
+```
+
+7. Create stack
+
+This provisions:
+
+* DynamoDB table
+* Kinesis stream
+* S3 archive bucket
+* Lambda integrations
+* API Gateway routing support
+
+---
+
+## Step 2 — Verify Resources
+
+Verify following services are created:
+
+| Service     | Resource       |
+| ----------- | -------------- |
+| DynamoDB    | health_data    |
+| Kinesis     | health-stream  |
+| S3          | archive bucket |
+| API Gateway | health-api     |
+
+---
+
+## Step 3 — Configure API Routes (If Not Auto-Created)
+
+Navigate to:
+
+```
+API Gateway → health-api
+```
+
+Create routes:
+
+```
+POST /ingest-health-data
+GET /realtime-data
+GET /historical-data
+```
+
+Attach integrations:
+
+| Route                   | Lambda                |
+| ----------------------- | --------------------- |
+| POST ingest-health-data | ingest-health-data    |
+| GET realtime-data       | realtime-health-api   |
+| GET historical-data     | historical-health-api |
+
+Deploy stage:
+
+```
+prod
+```
+
+---
+
+## Step 4 — Run Device Simulator
 
 ```
 python simulator/simulator.py
 ```
 
-This enables ingestion pipeline validation without requiring physical IoT hardware.
+Generates telemetry every 2 seconds.
 
 ---
 
-# Data Pipeline Design
+## Step 5 — Test APIs
 
-Kinesis Data Streams is used as the ingestion buffer between API Gateway and Lambda.
+Realtime:
 
-This provides:
+```
+GET /realtime-data?device_id=device001
+```
 
-* burst traffic handling
-* decoupled ingestion architecture
-* replay capability if required
-* shard-level horizontal scaling
+Historical:
 
-Lambda processes stream records and stores telemetry into DynamoDB using a time-series schema.
-
----
-
-# Storage Strategy (Hot / Warm / Cold Tiering)
-
-The architecture supports a tiered storage lifecycle strategy.
-
-### Hot Storage
-
-Amazon DynamoDB stores recent telemetry used by realtime APIs.
-
-### Warm Storage
-
-Historical telemetry can be exported to Amazon S3 Standard for analytics workloads.
-
-### Cold Storage
-
-Long-term retention can be implemented using Amazon S3 Glacier lifecycle policies.
-
-This supports scalable analytics and compliance-oriented retention requirements.
+```
+GET /historical-data?device_id=device001
+```
 
 ---
 
-# Scalability Model
-
-The system is designed to support **100,000+ healthcare telemetry devices**.
-
-Example production sizing assumption:
-
-* 100,000 registered devices
-* ~15% active concurrently
-* 7,500 events per second baseline
-* 5× burst traffic handling capability
-
-Scaling is handled through:
-
-* Kinesis shard scaling
-* Lambda automatic concurrency scaling
-* DynamoDB on-demand capacity mode
-* API Gateway managed scaling
-
-All services operate across multiple Availability Zones by default.
-
----
-
-# Performance Validation
-
-Load testing was performed using k6.
-
-Command used:
+## Step 6 — Load Testing
 
 ```
 k6 run --vus 100 --duration 30s load-test/loadtest.js
@@ -245,157 +284,166 @@ k6 run --vus 100 --duration 30s load-test/loadtest.js
 Result:
 
 ```
-14,000+ requests processed successfully with no failures observed
+14,000+ requests processed successfully with zero failures
 ```
 
-This validates burst traffic readiness of the ingestion pipeline.
+---
+
+# Storage Strategy (Hot / Warm / Cold Tiering)
+
+Hot:
+
+Recent telemetry stored in DynamoDB
+
+Warm:
+
+Exported to S3 Standard
+
+Cold:
+
+Archived using S3 Glacier lifecycle rules
+
+Supports analytics scalability and compliance retention.
+
+---
+
+# Scalability Model
+
+Architecture supports:
+
+* 100,000 registered devices
+* ~15% concurrently active devices
+* 7,500 events/sec baseline
+* 5× burst traffic handling capability
+
+Scaling handled by:
+
+* Kinesis shard scaling
+* Lambda concurrency scaling
+* DynamoDB on-demand mode
+* API Gateway managed scaling
+
+All services operate multi-AZ by default.
 
 ---
 
 # Security Architecture
 
-Security best practices implemented include:
+Security best practices implemented:
 
-* HTTPS-enabled API Gateway endpoints
-* IAM least-privilege execution roles
+* HTTPS ingestion endpoints
+* TLS encryption in transit
 * encryption at rest (DynamoDB, Kinesis)
-* encryption in transit using TLS
-* CloudTrail audit logging capability
+* IAM least-privilege roles
+* CloudTrail audit logging readiness
 
-For production deployment, JWT authorization or Amazon Cognito integration can be added.
+JWT authorization or Cognito can be added for production.
 
 ---
 
-# Compliance Readiness (HIPAA / GDPR Considerations)
+# Compliance Readiness (HIPAA / GDPR)
 
-The architecture supports compliance-aligned deployment through:
+Architecture supports compliance-oriented deployment through:
 
 * encryption at rest
 * encryption in transit
 * IAM role-based access control
-* audit logging via CloudTrail
-* serverless managed infrastructure isolation
-
-These features support secure handling of healthcare telemetry workloads.
+* CloudTrail audit logging
+* serverless infrastructure isolation
 
 ---
 
 # Monitoring and Observability
 
-Monitoring is implemented using Amazon CloudWatch.
+Monitoring implemented using CloudWatch.
 
-CloudWatch provides visibility into:
+Tracks:
 
 * Lambda execution logs
 * API latency metrics
 * DynamoDB capacity usage
 * Kinesis stream activity
 
-CloudWatch alarms can detect ingestion failures or latency spikes.
+CloudWatch alarms detect failures and latency spikes.
 
 ---
 
-# Infrastructure Deployment
+# Estimated Cost Model (Mumbai Region)
 
-Infrastructure is provisioned using AWS CloudFormation.
-
-Template location:
-
-```
-cloudformation/
-```
-
-Example deployment command:
-
-```
-aws cloudformation deploy \
---template-file cloudformation/healthcare-stack.yaml \
---stack-name healthcare-stack \
---capabilities CAPABILITY_NAMED_IAM
-```
-
-This enables repeatable and version-controlled infrastructure deployment.
-
----
-
-# Estimated Cost Model (Mumbai Region – Production Scenario)
-
-The following estimate models a realistic production deployment scenario aligned with the problem statement requirement of supporting **100,000+ devices**.
-
-Sizing assumptions:
+Assumptions:
 
 * 100,000 registered devices
-* ~15% concurrently active devices
-* telemetry frequency: 1 event every 2 seconds
-* baseline throughput: ~7,500 events/sec
-* burst handling: up to 5× load spikes
+* ~15% concurrently active
+* telemetry every 2 seconds
+* 7,500 events/sec baseline
+* 5× burst support
 
 Estimated monthly cost:
 
-| Service                        | Estimated Monthly Cost |
-| ------------------------------ | ---------------------- |
-| API Gateway                    | ~$19,000               |
-| Kinesis Data Streams           | ~$2,500                |
-| AWS Lambda                     | ~$1,000                |
-| DynamoDB (7‑day hot retention) | ~$5,000                |
-| CloudWatch                     | ~$500                  |
+| Service     | Monthly Cost |
+| ----------- | ------------ |
+| API Gateway | ~$19,000     |
+| Kinesis     | ~$2,500      |
+| Lambda      | ~$1,000      |
+| DynamoDB    | ~$5,000      |
+| CloudWatch  | ~$500        |
 
-Estimated total:
+Total:
 
 ```
-~$28,000 per month (~₹23 lakh/month)
+~$28,000/month (~₹23 lakh/month)
 ```
 
-Cost estimates are calculated using a realistic concurrency model where approximately **10–20% of registered medical devices transmit telemetry simultaneously**. The architecture remains capable of scaling to 100,000+ devices with burst handling through Kinesis shard scaling and Lambda concurrency expansion.
+Calculated using realistic concurrency modeling.
 
 ---
 
 # Design Decisions
 
-API Gateway was selected instead of AWS IoT Core to simplify ingestion for simulator-based device traffic while maintaining secure HTTPS endpoints.
+API Gateway selected instead of IoT Core for simulator-based ingestion simplicity.
 
-Kinesis Data Streams was introduced to absorb burst telemetry traffic and decouple ingestion from processing.
+Kinesis introduced for burst buffering and decoupling pipeline stages.
 
-Lambda was selected to keep compute event-driven and automatically scalable.
+Lambda used for event-driven compute scaling.
 
-DynamoDB was selected instead of relational databases to support time-series access patterns with predictable performance.
+DynamoDB selected for time-series access performance.
 
-CloudFormation was used to maintain AWS-native infrastructure provisioning.
+CloudFormation used for infrastructure reproducibility.
 
 ---
 
 # Trade-offs
 
-AWS IoT Core would be recommended for production-scale device authentication but was not required for this simulated workload.
+IoT Core recommended for production-scale authentication.
 
-Single-region deployment was used to simplify implementation. Multi-region disaster recovery can be added if required.
+Single-region deployment used for simplicity.
 
-Amazon Timestream could also be used for telemetry storage but DynamoDB provided flexible query access for API-driven workloads.
+Amazon Timestream considered but DynamoDB selected for API flexibility.
 
-Caching was not introduced because DynamoDB already provides low-latency realtime access. DynamoDB DAX or ElastiCache can be added for dashboard-heavy workloads.
+Caching not required due to DynamoDB low-latency reads.
 
 ---
 
 # Cost Optimization Strategy
 
-Cost efficiency is achieved through:
+Optimizations include:
 
-* serverless compute (no idle infrastructure)
-* DynamoDB hot-storage retention strategy
-* Kinesis shard scaling based on throughput demand
-* lifecycle archival to S3 Glacier for long-term retention
+* serverless compute model
+* DynamoDB hot-storage retention
+* shard-based Kinesis scaling
+* S3 Glacier lifecycle archival
 
-For very large-scale deployments with continuously active 100,000+ devices, AWS IoT Core can replace API Gateway ingestion to significantly reduce telemetry ingestion cost while enabling certificate-based device authentication.
+IoT Core can further reduce ingestion cost at very large scale.
 
 ---
 
 # Future Improvements
 
-Possible production enhancements include:
+Planned enhancements:
 
 * AWS IoT Core device authentication
-* JWT authorization via API Gateway
+* JWT authorization
 * multi-region disaster recovery deployment
 * CI/CD automation using GitHub Actions
-* Grafana dashboards for observability
+* Grafana dashboards
 * DynamoDB Global Tables for geo-replication
